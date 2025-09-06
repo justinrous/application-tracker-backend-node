@@ -19,6 +19,11 @@ app.post('/api/users/register', async (req, res) => {
     }
 });
 
+app.post('/api/users/login', (req, res) => {
+    // Implement login logic here
+    res.status(200).send('Login endpoint');
+});
+
 
 app.listen(PORT, () => {
     console.log(`Server is running on http://localhost:${PORT}`);
