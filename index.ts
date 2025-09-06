@@ -2,6 +2,7 @@ import express from 'express';
 import 'dotenv/config';
 import { registerUser } from './models/models.ts';
 import cors from 'cors';
+import bcrypt from 'bcrypt';
 
 const app = express();
 const PORT: number | string = process.env.PORT || 3000;
@@ -9,9 +10,18 @@ const PORT: number | string = process.env.PORT || 3000;
 app.use(express.json());
 app.use(cors());
 
+async function hashPassword(password: string): Promise<string> {
+    const saltRounds = 10;
+    return await bcrypt.hash(password, saltRounds);
+}
+
 app.post('/api/users/register', async (req, res) => {
     try {
-        await registerUser(req.body.username, req.body.password);
+        // Validate user password
+        // Check username uniqueness
+        // Hash password before saving
+        const hashedPassword: string = await hashPassword(req.body.password);
+        await registerUser(req.body.username, hashedPassword);
         res.status(201).send('User registered successfully');
     }
     catch (error) {
