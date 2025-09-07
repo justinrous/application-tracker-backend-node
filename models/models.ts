@@ -8,12 +8,18 @@ catch (error) {
     console.error('Error connecting to MongoDB:', error);
 }
 
+// Define Schema and Model
+const userSchema = new mongoose.Schema({
+    username: { type: String, required: true, unique: true },
+    password: { type: String, required: true }
+});
+const User = mongoose.model('User', userSchema);
+
+async function getUserPassword(username: string): Promise<string | null> {
+    return User.findOne({ username }).then(user => user ? user.password : null);
+};
+
 async function registerUser(username: string, password: string): Promise<void> {
-    const userSchema = new mongoose.Schema({
-        username: { type: String, required: true, unique: true },
-        password: { type: String, required: true }
-    });
-    const User = mongoose.model('User', userSchema);
     const newUser = new User({ username, password });
     newUser.save()
         .then(() => console.log('User registered successfully'))
@@ -24,5 +30,5 @@ async function registerUser(username: string, password: string): Promise<void> {
 }
 
 
-export { registerUser };
+export { registerUser, getUserPassword };
 

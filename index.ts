@@ -1,6 +1,6 @@
 import express from 'express';
 import 'dotenv/config';
-import { registerUser } from './models/models.ts';
+import { registerUser, getUserPassword } from './models/models.ts';
 import cors from 'cors';
 import bcrypt from 'bcrypt';
 
@@ -29,9 +29,25 @@ app.post('/api/users/register', async (req, res) => {
     }
 });
 
-app.post('/api/users/login', (req, res) => {
-    // Implement login logic here
-    res.status(200).send('Login endpoint');
+app.post('/api/users/login', async (req, res) => {
+    // Retreive password by username
+    const userDBHashedPassword: string | null = await getUserPassword(req.body.username);
+    console.log('Retrieved hashed password from DB:', userDBHashedPassword);
+
+    if (!userDBHashedPassword) {
+        console.log('Invalid username or password');
+        res.status(401).send('Invalid username or password');
+        return;
+    }
+    // Compare passwords using bcrypt
+    else if (await bcrypt.compare(req.body.password, userDBHashedPassword)) {
+        console.log('Login successful');
+        res.status(200).send('Login successful');
+    }
+    else {
+        console.log('Invalid username or password');
+        res.status(401).send('Invalid username or password');
+    }
 });
 
 
