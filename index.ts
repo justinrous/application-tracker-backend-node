@@ -2,10 +2,12 @@ import express from 'express';
 import dotenv from 'dotenv';
 // import { registerUser, getUserPassword } from './models/models.ts';
 import * as model from './models/models.ts';
+import type { IUser, Application, Category } from './models/models.ts';
 import cors from 'cors';
-import bcrypt from 'bcrypt';
+import bcrypt, { compare } from 'bcrypt';
 import jsonwebtoken from 'jsonwebtoken';
 import cookieParser from 'cookie-parser';
+import { Types } from 'mongoose';
 
 dotenv.config();
 
@@ -16,7 +18,10 @@ const PORT: number | string = process.env.PORT || 3000;
 // Initialize Middleware
 app.use(cookieParser());
 app.use(express.json());
-app.use(cors());
+app.use(cors({
+    origin: process.env.FRONTENDURL_DEV,
+    credentials: true
+}));
 
 async function hashPassword(password: string): Promise<string> {
     const saltRounds = 10;
@@ -42,7 +47,9 @@ async function verifyJwt(req: express.Request, res: express.Response, next: expr
 }
 
 
-
+/**********************************************************
+ * ****************** API Endpoints ************************
+ * ******************************************************/
 app.post('/api/users/register', async (req, res) => {
     try {
         // Validate user password
@@ -58,67 +65,69 @@ app.post('/api/users/register', async (req, res) => {
 });
 
 app.post('/api/users/login', async (req, res) => {
-    // Retreive password by username
-    const userDBHashedPassword: string | null = await model.getUserPassword(req.body.username);
-    console.log('Retrieved hashed password from DB:', userDBHashedPassword);
+    try {
+        // Retreive password by username
+        const user: IUser | null = await model.getUser(req.body.username);
+        console.log('Retrieved hashed password from DB:', user.username);
 
-    if (!userDBHashedPassword) {
-        console.log('Invalid username or password');
-        res.status(401).send('Invalid username or password');
-        return;
+        if (!user) {
+            console.log('Invalid username or password');
+            res.status(401).send('Invalid username or password');
+            return;
+        }
+        // Compare passwords using bcrypt
+        else if (await bcrypt.compare(req.body.password, user.password)) {
+            console.log('Login successful');
+            const jwtSecret = process.env.JWTSECRET;
+            if (!jwtSecret) {
+                console.error('JWT secret not configured');
+                res.status(500).send('JWT secret not configured');
+                return;
+            }
+            const token = jsonwebtoken.sign({ username: req.body.username, id: user._id?.toString() }, jwtSecret, { expiresIn: '2h' });
+            res.cookie('token', token, {
+                httpOnly: true, // helps prevent XSS
+                secure: process.env.NODE_ENV === 'production', // only send cookie over HTTPS in production )
+                sameSite: 'strict', // CSRF protection
+                maxAge: 2 * 60 * 60 * 1000 // 2 hours in ms
+            });
+            res.status(200).send('Login successful');
+        }
+        else {
+            console.log('Invalid username or password');
+            res.status(401).send('Invalid username or password');
+        }
     }
-    // Compare passwords using bcrypt
-    else if (await bcrypt.compare(req.body.password, userDBHashedPassword)) {
-        console.log('Login successful');
+    catch (error) {
+        console.error('Error during login:', error);
+        res.status(500).send('Error logging in');
+    }
+});
+
+app.post('/api/applications', verifyJwt, async (req, res) => {
+
+    try {
+        // Get user ID from verified JWT
         const jwtSecret = process.env.JWTSECRET;
         if (!jwtSecret) {
             console.error('JWT secret not configured');
             res.status(500).send('JWT secret not configured');
             return;
         }
-        const token = jsonwebtoken.sign({ username: req.body.username }, jwtSecret, { expiresIn: '2h' });
-        res.cookie('token', token, {
-            httpOnly: true, // helps prevent XSS
-            secure: process.env.NODE_ENV === 'production', // only send cookie over HTTPS in production )
-            sameSite: 'strict', // CSRF protection
-            maxAge: 2 * 60 * 60 * 1000 // 2 hours in ms
-        });
-        res.status(200).send('Login successful');
-    }
-    else {
-        console.log('Invalid username or password');
-        res.status(401).send('Invalid username or password');
-    }
-});
+        const decoded = jsonwebtoken.verify(req.cookies['token'], jwtSecret) as { username: string, id: string };
+        const userId = new Types.ObjectId(decoded.id);
+        console.log('Decoded JWT:', decoded);
+        const { application, category } = req.body;
 
-app.post('/api/applications', verifyJwt, async (req, res) => {
-
-    /* Example request body:
-    /
-
-    type Category = {
-    name: string;
-    id: string;
-}
-
-type Application = {
-    jobTitle: string;
-    companyName: string;
-    applicationDate: string;
-    status: string;
-    categoryName: string;
-}; */
-
-    try {
         // Check if Category Exists
-        const { jobTitle, companyName, applicationDate, status, categoryName } = req.body;
-        const category = await model.getCategory(categoryName);
-        // If Category does not exist, Create New Category
-        if (!category) {
-            await model.addCategory(categoryName);
+        const { jobTitle, companyName, applicationDate, status, categoryName, frontendId } = application;
+        let existingCategory = await model.getCategoryByName(categoryName);
+        if (!existingCategory) {
+            await model.addCategory(category.name, category.frontendId);
         }
+
         // Add application with the new Category
-        await model.addApplication(jobTitle, companyName, categoryName, applicationDate, status);
+        await model.addApplication(frontendId, jobTitle, companyName, categoryName, applicationDate, status, userId);
 
         // Add new application
         res.status(201).send('Application added successfully');
@@ -132,8 +141,37 @@ type Application = {
 
 app.get('/api/dashboard', verifyJwt, async (req, res) => {
     try {
-        const applications = await model.getApplications();
-        res.status(200).json(applications);
+        const jwtSecret = process.env.JWTSECRET;
+        if (!jwtSecret) {
+            console.error('JWT secret not configured');
+            res.status(500).send('JWT secret not configured');
+            return;
+        }
+        const decoded = jsonwebtoken.verify(req.cookies['token'], jwtSecret) as { username: string, id: string };
+        const userId: Types.ObjectId = new Types.ObjectId(decoded.id);
+
+        // Retrieve applications and categories from DB
+        const applications: any[] = await model.getApplicationsByUser(userId);
+        const categories: Category[] = await model.getCategories();
+
+        // Structure data for frontend
+        const data: Application[] = applications.map(app => ({
+            frontendId: app.frontendId,
+            jobTitle: app.jobTitle,
+            companyName: app.companyName,
+            categoryName: app.categoryName,
+            applicationDate: app.applicationDate,
+            status: app.status,
+        }));
+
+        const categoriesData: Category[] = categories.map(cat => ({
+            name: cat.name,
+            frontendId: cat.frontendId || null
+        }));
+
+        const result = { applicationData: data, categoriesData: categoriesData };
+        console.log('Result:', result);
+        res.status(200).json(result);
     }
     catch (error) {
         res.status(500).send('Error retrieving applications');
