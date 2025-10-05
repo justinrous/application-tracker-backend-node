@@ -104,6 +104,24 @@ app.post('/api/users/login', async (req, res) => {
     }
 });
 
+app.post('/api/users/logout', verifyJwt, (req, res) => {
+    try {
+        if (!req.cookies['token']) {
+            return res.status(400).send('No token found');
+        }
+        res.clearCookie('token', {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'strict'
+        })
+        res.status(200).send('Logout successful');
+    }
+    catch (error) {
+        console.error('Error during logout:', error);
+        res.status(500).send('Error logging out');
+    }
+});
+
 app.post('/api/applications', verifyJwt, async (req, res) => {
 
     try {
